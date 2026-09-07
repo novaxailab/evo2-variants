@@ -1,8 +1,9 @@
-import sys
-
 import modal
-
 from pydantic import BaseModel
+
+from common import VOLUMES, data_volume, evo2_image
+from finetune import config as ft_config
+
 
 class VariantRequest(BaseModel):
     variant_position: int
@@ -10,31 +11,19 @@ class VariantRequest(BaseModel):
     genome: str
     chromosome: str
 
-evo2_image = (
-    modal.Image.from_registry(
-        "nvidia/cuda:12.4.0-devel-ubuntu22.04", add_python="3.12"
-    )
-    .apt_install(
-        ["build-essential", "cmake", "ninja-build",
-            "libcudnn8", "libcudnn8-dev", "git", "gcc", "g++"]
-    )
-    .env({
-        "CC": "/usr/bin/gcc",
-        "CXX": "/usr/bin/g++",
-    })
-    .run_commands("git clone --recurse-submodules https://github.com/ArcInstitute/evo2.git && cd evo2 && pip install .")
-    .run_commands("pip uninstall -y transformer-engine transformer_engine")
-    .run_commands("pip install 'transformer_engine[pytorch]==1.13' --no-build-isolation")
-    .pip_install_from_requirements("requirements.txt")
-)
 
 app = modal.App("variant-analysis-evo2", image=evo2_image)
 
-volume = modal.Volume.from_name("hf_cache", create_if_missing=True)
-mount_path = "/root/.cache/huggingface"
+WINDOW_SIZE = ft_config.DEFAULT_FEATURE_CONFIG.window_size
+
+# Zero-shot decision boundary, fitted on 500 BRCA1 SNVs by run_brca1_analysis
+# below. Used when no fine-tuned head has been published.
+ZERO_SHOT_THRESHOLD = -0.0009178519
+ZERO_SHOT_LOF_STD = 0.0015140239
+ZERO_SHOT_FUNC_STD = 0.0009016589
 
 
-@app.function(gpu="H100", volumes={mount_path: volume}, timeout=1000)
+@app.function(gpu="H100", volumes=VOLUMES, timeout=1000)
 def run_brca1_analysis():
     import base64
     from io import BytesIO
@@ -43,16 +32,13 @@ def run_brca1_analysis():
     import matplotlib.pyplot as plt
     import numpy as np
     import pandas as pd
-    import os
     import seaborn as sns
     from sklearn.metrics import roc_auc_score, roc_curve
 
-    from evo2 import Evo2
-
-    WINDOW_SIZE = 8192
+    from finetune.loader import load_evo2
 
     print("Loading evo2 model...")
-    model = Evo2('evo2_7b')
+    model = load_evo2('evo2_7b')
     print("Evo2 model loaded")
 
     brca1_df = pd.read_excel(
@@ -219,125 +205,114 @@ def brca1_example():
         plt.show()
 
 
-def get_genome_sequence(position, genome: str, chromosome: str, window_size=8192):
-    import requests
+def zero_shot_prediction(delta_score: float) -> dict:
+    """Classify from the raw delta-likelihood score alone.
 
-    half_window = window_size // 2
-    start = max(0, position - 1 - half_window)
-    end = position - 1 + half_window + 1
-
-    print(
-        f"Fetching {window_size}bp window around position {position} from UCSC API..")
-    print(f"Coordinates: {chromosome}:{start}-{end} ({genome})")
-
-    api_url = f"https://api.genome.ucsc.edu/getData/sequence?genome={genome};chrom={chromosome};start={start};end={end}"
-    response = requests.get(api_url)
-
-    if response.status_code != 200:
-        raise Exception(
-            f"Failed to fetch genome sequence from UCSC API: {response.status_code}")
-
-    genome_data = response.json()
-
-    if "dna" not in genome_data:
-        error = genome_data.get("error", "Unknown error")
-        raise Exception(f"UCSC API errpr: {error}")
-
-    sequence = genome_data.get("dna", "").upper()
-    expected_length = end - start
-    if len(sequence) != expected_length:
-        print(
-            f"Warning: received sequence length ({len(sequence)}) differs from expected ({expected_length})")
-
-    print(
-        f"Loaded reference genome sequence window (length: {len(sequence)} bases)")
-
-    return sequence, start
-
-
-def analyze_variant(relative_pos_in_window, reference, alternative, window_seq, model):
-    var_seq = window_seq[:relative_pos_in_window] + \
-        alternative + window_seq[relative_pos_in_window+1:]
-
-    ref_score = model.score_sequences([window_seq])[0]
-    var_score = model.score_sequences([var_seq])[0]
-
-    delta_score = var_score - ref_score
-
-    threshold = -0.0009178519
-    lof_std = 0.0015140239
-    func_std = 0.0009016589
-
-    if delta_score < threshold:
+    The confidence is a heuristic — distance past the threshold in units of the
+    corresponding class's standard deviation — not a probability. The fine-tuned
+    head replaces it with a calibrated one.
+    """
+    if delta_score < ZERO_SHOT_THRESHOLD:
         prediction = "Likely pathogenic"
-        confidence = min(1.0, abs(delta_score - threshold) / lof_std)
+        confidence = min(
+            1.0, abs(delta_score - ZERO_SHOT_THRESHOLD) / ZERO_SHOT_LOF_STD
+        )
     else:
         prediction = "Likely benign"
-        confidence = min(1.0, abs(delta_score - threshold) / func_std)
+        confidence = min(
+            1.0, abs(delta_score - ZERO_SHOT_THRESHOLD) / ZERO_SHOT_FUNC_STD
+        )
 
     return {
-        "reference": reference,
-        "alternative": alternative,
-        "delta_score": float(delta_score),
         "prediction": prediction,
-        "classification_confidence": float(confidence)
+        "classification_confidence": float(confidence),
     }
 
 
-@app.cls(gpu="H100", volumes={mount_path: volume}, max_containers=3, retries=2, scaledown_window=120)
+@app.cls(gpu="H100", volumes=VOLUMES, max_containers=3, retries=2, scaledown_window=120)
 class Evo2Model:
     @modal.enter()
     def load_evo2_model(self):
-        from evo2 import Evo2
+        from finetune.head import load_active_head
+        from finetune.loader import load_evo2
+
         print("Loading evo2 model...")
-        self.model = Evo2('evo2_7b')
+        self.model = load_evo2(ft_config.MODEL_NAME)
         print("Evo2 model loaded")
 
-    # @modal.method()
+        # A published head is optional: without one the endpoint serves the
+        # zero-shot score exactly as before.
+        data_volume.reload()
+        self.head = load_active_head(device="cuda")
+        if self.head is None:
+            print("No fine-tuned head published; serving zero-shot predictions")
+            self.feature_config = ft_config.DEFAULT_FEATURE_CONFIG
+        else:
+            metrics = self.head.metrics.get("splits", {})
+            print(
+                "Loaded fine-tuned head "
+                f"(benchmark AUROC "
+                f"{metrics.get('benchmark', {}).get('head', {}).get('auroc', float('nan')):.4f})"
+            )
+            # Always build features with the config the head was trained on.
+            self.feature_config = self.head.feature_config
+
     @modal.fastapi_endpoint(method="POST")
     def analyze_single_variant(self, request: VariantRequest):
-        variant_position = request.variant_position
-        alternative = request.alternative
-        genome = request.genome
-        chromosome = request.chromosome
+        from finetune.features import extract_variant_features
+        from finetune.sequences import build_variant_window, fetch_window_ucsc
 
-        print("Genome:", genome)
-        print("Chromosome:", chromosome)
-        print("Variant position:", variant_position)
-        print("Variant alternative:", alternative)
-
-        WINDOW_SIZE = 8192
-
-        window_seq, seq_start = get_genome_sequence(
-            position=variant_position,
-            genome=genome,
-            chromosome=chromosome,
-            window_size=WINDOW_SIZE
+        print(
+            f"Analyzing {request.chromosome}:{request.variant_position} "
+            f">{request.alternative} on {request.genome}"
         )
 
-        print(f"Fetched genome seauence window, first 100: {window_seq[:100]}")
+        window_seq, seq_start = fetch_window_ucsc(
+            position=request.variant_position,
+            genome=request.genome,
+            chromosome=request.chromosome,
+            window_size=self.feature_config.window_size,
+        )
 
-        relative_pos = variant_position - 1 - seq_start
-        print(f"Relative position within window: {relative_pos}")
-
+        relative_pos = request.variant_position - 1 - seq_start
         if relative_pos < 0 or relative_pos >= len(window_seq):
             raise ValueError(
-                f"Variant position {variant_position} is outside the fetched window (start={seq_start+1}, end={seq_start+len(window_seq)})")
+                f"Variant position {request.variant_position} is outside the fetched "
+                f"window (start={seq_start + 1}, end={seq_start + len(window_seq)})"
+            )
 
-        reference = window_seq[relative_pos]
-        print("Reference is: " + reference)
-
-        # Analyze the variant
-        result = analyze_variant(
-            relative_pos_in_window=relative_pos,
-            reference=reference,
-            alternative=alternative,
-            window_seq=window_seq,
-            model=self.model
+        var_seq, reference = build_variant_window(
+            window_seq, relative_pos, request.alternative
         )
+        print(f"Reference base at {request.variant_position}: {reference}")
 
-        result["position"] = variant_position
+        # One paired forward pass yields both the likelihood scores and the
+        # embeddings, so the trained head costs no extra GPU time.
+        extracted = extract_variant_features(
+            self.model, window_seq, var_seq, relative_pos, self.feature_config
+        )
+        delta_score = float(extracted["delta_score"])
 
+        result = {
+            "position": request.variant_position,
+            "reference": reference,
+            "alternative": request.alternative,
+            "delta_score": delta_score,
+        }
+
+        zero_shot = zero_shot_prediction(delta_score)
+        if self.head is None:
+            result.update(zero_shot)
+            result["model"] = "zero-shot"
+        else:
+            result.update(
+                self.head.predict_one(extracted["embedding"], extracted["scalar"])
+            )
+            result["model"] = "fine-tuned"
+            # Kept so the UI can still show what the raw score alone would say.
+            result["zero_shot"] = zero_shot
+
+        print(f"Result: {result['prediction']} (delta_score={delta_score:.6f})")
         return result
 
 
@@ -345,7 +320,6 @@ class Evo2Model:
 def main():
     # Example of how you'd call the deployed Modal Function from your client
     import requests
-    import json    # brca1_example.remote()
 
     evo2Model = Evo2Model()
 

@@ -143,6 +143,7 @@ export async function searchGenes(query: string, genome: string) {
     terms: query,
     df: "chromosome,Symbol,description,map_location,type_of_gene",
     ef: "chromosome,Symbol,description,map_location,type_of_gene,GenomicInfo,GeneID",
+    maxList: "10",
   });
   const response = await fetch(`${url}?${params}`);
   if (!response.ok) {
@@ -164,10 +165,10 @@ export async function searchGenes(query: string, genome: string) {
             chrom = `chr${chrom}`;
           }
           results.push({
-            symbol: display[2],
-            name: display[3],
+            symbol: display[1],
+            name: display[2],
             chrom,
-            description: display[3],
+            description: display[2],
             gene_id: geneIds[i] || "",
           });
         } catch {
@@ -361,16 +362,19 @@ export async function analyzeVariantWithAPI({
   genomeId: string;
   chromosome: string;
 }): Promise<AnalysisResult> {
-  const queryParams = new URLSearchParams({
-    variant_position: position.toString(),
-    alternative: alternative,
-    genome: genomeId,
-    chromosome: chromosome,
-  });
-
-  const url = `${env.NEXT_PUBLIC_ANALYZE_SINGLE_VARIANT_BASE_URL}?${queryParams.toString()}`;
-
-  const response = await fetch(url, { method: "POST" });
+  const response = await fetch(
+    env.NEXT_PUBLIC_ANALYZE_SINGLE_VARIANT_BASE_URL,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        variant_position: position,
+        alternative: alternative,
+        genome: genomeId,
+        chromosome: chromosome,
+      }),
+    },
+  );
 
   if (!response.ok) {
     const errorText = await response.text();

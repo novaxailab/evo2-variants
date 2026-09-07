@@ -34,6 +34,7 @@ evo2-frontend/next-env.d.ts
 
 # Backend (evo2-backend - Python/Modal)
 evo2-backend/__pycache__/
+evo2-backend/**/__pycache__/
 evo2-backend/*.pyc
 evo2-backend/*.pyo
 evo2-backend/*.pyd

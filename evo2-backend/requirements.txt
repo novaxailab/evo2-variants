@@ -5,3 +5,7 @@ pandas
 seaborn
 scikit-learn
 openpyxl
+# Fine-tuning pipeline
+pyfaidx
+pyarrow
+requests
