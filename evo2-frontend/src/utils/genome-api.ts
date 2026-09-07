@@ -51,6 +51,7 @@ export interface ClinvarVariant {
     prediction: string;
     delta_score: number;
     classification_confidence: number;
+    model?: string;
   };
   isAnalyzing?: boolean;
   evo2Error?: string;
@@ -63,6 +64,34 @@ export interface AnalysisResult {
   delta_score: number;
   prediction: string;
   classification_confidence: number;
+  /** "zero-shot" when no fine-tuned head is published, else "fine-tuned". */
+  model?: string;
+}
+
+/**
+ * NCBI esummary omits the `strand` field for many genes, but encodes the same
+ * information in the coordinates: a minus-strand gene is reported with
+ * chrstart > chrstop.
+ */
+export function getGeneStrand(
+  geneDetail: GeneDetailsFromSearch | null,
+): "+" | "-" | null {
+  const info = geneDetail?.genomicinfo?.[0];
+  if (!info) return null;
+  if (info.strand === "+" || info.strand === "-") return info.strand;
+  if (info.chrstart === undefined || info.chrstop === undefined) return null;
+  return info.chrstart > info.chrstop ? "-" : "+";
+}
+
+const COMPLEMENT: Record<string, string> = {
+  A: "T",
+  T: "A",
+  G: "C",
+  C: "G",
+};
+
+export function complementBase(base: string) {
+  return COMPLEMENT[base.toUpperCase()] ?? base;
 }
 
 export async function getAvailableGenomes() {

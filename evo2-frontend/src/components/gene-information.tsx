@@ -1,7 +1,8 @@
-import type {
-  GeneBounds,
-  GeneDetailsFromSearch,
-  GeneFromSearch,
+import {
+  getGeneStrand,
+  type GeneBounds,
+  type GeneDetailsFromSearch,
+  type GeneFromSearch,
 } from "~/utils/genome-api";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { ExternalLink } from "lucide-react";
@@ -63,7 +64,7 @@ export function GeneInformation({
                     geneBounds.max - geneBounds.min + 1,
                   ).toLocaleString()}{" "}
                   bp)
-                  {geneDetail?.genomicinfo?.[0]?.strand === "-" &&
+                  {getGeneStrand(geneDetail) === "-" &&
                     " (reverse strand)"}
                 </span>
               </div>

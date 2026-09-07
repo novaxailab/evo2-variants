@@ -253,6 +253,7 @@ export default function GeneViewer({
         clinvarError={clinvarError}
         genomeId={genomeId}
         gene={gene}
+        geneDetail={geneDetail}
       />
 
       <GeneSequence

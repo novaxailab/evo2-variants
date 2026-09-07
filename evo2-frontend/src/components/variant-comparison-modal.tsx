@@ -5,6 +5,7 @@ import {
   getClassificationColorClasses,
   getNucleotideColorClass,
 } from "~/utils/coloring-utils";
+import { formatDeltaScore } from "~/lib/utils";
 
 export function VariantComparisonModal({
   comparisonVariant,
@@ -147,6 +148,11 @@ export function VariantComparisonModal({
                           <span className="h-3 w-3 rounded-full bg-[#de8246]"></span>
                         </span>
                         Evo2 Prediction
+                        {comparisonVariant.evo2Result.model && (
+                          <span className="rounded bg-[#3c4f3d]/10 px-1.5 py-0.5 text-[10px] font-normal text-[#3c4f3d]/70">
+                            {comparisonVariant.evo2Result.model}
+                          </span>
+                        )}
                       </h5>
                       <div className="mt-2">
                         <div
@@ -162,7 +168,7 @@ export function VariantComparisonModal({
                           Delta Likelihood Score:
                         </div>
                         <div className="text-sm font-medium">
-                          {comparisonVariant.evo2Result.delta_score.toFixed(6)}
+                          {formatDeltaScore(comparisonVariant.evo2Result.delta_score)}
                         </div>
                         <div className="text-xs text-[#3c4f3d]/60">
                           {comparisonVariant.evo2Result.delta_score < 0

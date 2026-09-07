@@ -8,6 +8,7 @@ import {
   type GeneFromSearch,
 } from "~/utils/genome-api";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
+import { formatDeltaScore } from "~/lib/utils";
 import { Input } from "./ui/input";
 import React, {
   forwardRef,
@@ -314,16 +315,23 @@ const VariantAnalysis = forwardRef<VariantAnalysisHandle, VariantAnalysisProps>(
                       Delta likelihood score
                     </div>
                     <div className="text-sm">
-                      {variantResult.delta_score.toFixed(6)}
+                      {formatDeltaScore(variantResult.delta_score)}
                     </div>
                     <div className="text-xs text-[#3c4f3d]/60">
-                      Negative score indicates loss of function
+                      {variantResult.delta_score < 0
+                        ? "Negative score indicates loss of function"
+                        : "Positive score indicates gain/neutral function"}
                     </div>
                   </div>
                 </div>
                 <div>
-                  <div className="text-xs font-medium text-[#3c4f3d]/70">
+                  <div className="flex items-center gap-2 text-xs font-medium text-[#3c4f3d]/70">
                     Prediction
+                    {variantResult.model && (
+                      <span className="rounded bg-[#3c4f3d]/10 px-1.5 py-0.5 text-[10px] font-normal">
+                        {variantResult.model}
+                      </span>
+                    )}
                   </div>
                   <div
                     className={`inline-block rounded-lg px-3 py-1 text-xs ${getClassificationColorClasses(variantResult.prediction)}`}

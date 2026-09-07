@@ -1,6 +1,10 @@
 "use client";
 
-import type { GeneBounds, GeneDetailsFromSearch } from "~/utils/genome-api";
+import {
+  getGeneStrand,
+  type GeneBounds,
+  type GeneDetailsFromSearch,
+} from "~/utils/genome-api";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import {
   startTransition,
@@ -372,9 +376,9 @@ export function GeneSequence({
 
         <div className="mb-2 flex items-center justify-between text-xs">
           <span className="text-[#3c4f3d]/70">
-            {geneDetail?.genomicinfo?.[0]?.strand === "+"
+            {getGeneStrand(geneDetail) === "+"
               ? "Forward strand (5' -> 3')"
-              : geneDetail?.genomicinfo?.[0]?.strand === "-"
+              : getGeneStrand(geneDetail) === "-"
                 ? "Reverse strand (3' <- 5')"
                 : "Strand information not available"}
           </span>

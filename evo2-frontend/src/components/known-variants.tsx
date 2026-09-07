@@ -2,7 +2,10 @@
 
 import {
   analyzeVariantWithAPI,
+  complementBase,
+  getGeneStrand,
   type ClinvarVariant,
+  type GeneDetailsFromSearch,
   type GeneFromSearch,
 } from "~/utils/genome-api";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
@@ -35,6 +38,7 @@ export default function KnownVariants({
   clinvarError,
   genomeId,
   gene,
+  geneDetail,
 }: {
   refreshVariants: () => void;
   showComparison: (variant: ClinvarVariant) => void;
@@ -44,6 +48,7 @@ export default function KnownVariants({
   clinvarError: string | null;
   genomeId: string;
   gene: GeneFromSearch;
+  geneDetail: GeneDetailsFromSearch | null;
 }) {
   const analyzeVariant = async (variant: ClinvarVariant) => {
     let variantDetails = null;
@@ -54,10 +59,20 @@ export default function KnownVariants({
     const refAltMatch = variant.title.match(/(\w)>(\w)/);
 
     if (refAltMatch && refAltMatch.length === 3) {
+      // ClinVar titles quote alleles in transcript orientation (e.g. the
+      // NM_ HGVS "c.3306T>A"). The API scores the genomic forward strand, so
+      // alleles from a minus-strand gene have to be complemented first —
+      // otherwise the "alternative" we send is the reference base itself and
+      // every variant scores a delta of exactly 0.
+      const isReverseStrand = getGeneStrand(geneDetail) === "-";
       variantDetails = {
         position,
-        reference: refAltMatch[1],
-        alternative: refAltMatch[2],
+        reference: isReverseStrand
+          ? complementBase(refAltMatch[1]!)
+          : refAltMatch[1],
+        alternative: isReverseStrand
+          ? complementBase(refAltMatch[2]!)
+          : refAltMatch[2],
       };
     }
 
